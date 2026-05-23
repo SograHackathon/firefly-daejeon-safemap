@@ -7,39 +7,47 @@ import SearchPanel, { type RouteResult, type Place } from './SearchPanel'
 
 type CurrentUser = { id: string; email: string; display_name: string; phone?: string | null; phone_verified?: boolean } | null
 
-type Layer = 'cctv' | 'lights' | 'bells' | 'cvs' | 'danger' | 'blindspots'
+type Layer = 'cctv' | 'lights' | 'bells' | 'cvs' | 'danger'
 
 const DEFAULT_CENTER = { lat: 36.3672, lng: 127.3454 } // 충남대 정문
 const DEFAULT_LEVEL = 4
 
-const LAYER_META: Record<Layer, { label: string; color: string; icon: string }> = {
-  cctv:       { label: 'CCTV',     color: '#2d7eff', icon: '📹' },
-  lights:     { label: '가로등',   color: '#f59e0b', icon: '💡' },
-  bells:      { label: '비상벨',   color: '#16a34a', icon: '🛎' },
-  cvs:        { label: '편의점',   color: '#ff8a00', icon: '🏪' },
-  danger:     { label: '사고다발', color: '#ef4444', icon: '⚠' },
-  blindspots: { label: '사각지대', color: '#dc2626', icon: '🕶' },
+// SVG 라인 아이콘 (lucide 스타일) — 마커/칩 양쪽에서 사용. 색은 currentColor 로 상속.
+const ICON_SVG = {
+  // CCTV — 카메라 본체 + 렌즈
+  cctv: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9.5L18 5l3 7-16 4.5z"/><path d="M5 16l-1 4"/><circle cx="11" cy="11" r="1.5"/></svg>`,
+  // 가로등 — 등기둥 + 빛
+  lights: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v4"/><path d="M8 5l4-2 4 2"/><rect x="11" y="7" width="2" height="10"/><path d="M9 21h6"/></svg>`,
+  // 비상벨 — 종 모양
+  bells: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>`,
+  // 편의점 — 가게(스토어) 아이콘
+  cvs: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l1.5-5h15L21 9"/><path d="M3 9v11h18V9"/><path d="M3 9h18"/><path d="M9 13h6"/></svg>`,
+  // 사고다발 — 경고 삼각형
+  danger: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4L2 20h20L12 4z"/><path d="M12 10v5"/><circle cx="12" cy="18" r="0.6" fill="currentColor"/></svg>`,
 }
 
-const ALL_LAYERS: Layer[] = ['cctv', 'lights', 'bells', 'cvs', 'danger', 'blindspots']
+const LAYER_META: Record<Layer, { label: string; color: string; icon: string }> = {
+  cctv:   { label: 'CCTV',     color: '#2d7eff', icon: '📹' },
+  lights: { label: '가로등',   color: '#f59e0b', icon: '💡' },
+  bells:  { label: '비상벨',   color: '#16a34a', icon: ICON_SVG.bells },
+  cvs:    { label: '편의점',   color: '#ff8a00', icon: ICON_SVG.cvs },
+  danger: { label: '사고다발', color: '#ef4444', icon: ICON_SVG.danger },
+}
+
+const ALL_LAYERS: Layer[] = ['cctv', 'lights', 'bells', 'cvs', 'danger']
 
 export default function MapView() {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
   const overlaysRef = useRef<Record<Layer, any[]>>({
-    cctv: [], lights: [], bells: [], cvs: [], danger: [], blindspots: []
+    cctv: [], lights: [], bells: [], cvs: [], danger: []
   })
 
   const [active, setActive] = useState<Set<Layer>>(new Set())
   const [ready, setReady] = useState(false)
   const [counts, setCounts] = useState<Record<Layer, number>>({
-    cctv: 0, lights: 0, bells: 0, cvs: 0, danger: 0, blindspots: 0
+    cctv: 0, lights: 0, bells: 0, cvs: 0, danger: 0
   })
-  const [blindspotStats, setBlindspotStats] = useState<{
-    coverage_pct: number
-    blindspot_area_m2: number
-    cctv_count: number
-  } | null>(null)
 
   // ===== 사용자 위치 + 안전점수 =====
   const [userPos, setUserPos] = useState<{ lat: number; lng: number }>(DEFAULT_CENTER)
@@ -72,8 +80,49 @@ export default function MapView() {
   }, [router])
 
   // ===== SOS 동선 공유 state =====
-  const [sosSession, setSosSession] = useState<{ session_id: string; share_url: string; expires_at: string } | null>(null)
+  const [sosSession, setSosSession] = useState<{ session_id: string; share_url: string; expires_at: string; otp?: string } | null>(null)
   const [sosToast, setSosToast] = useState<string | null>(null)
+
+  // ===== 시민 제보 (k-익명화) state =====
+  const [reportOpen, setReportOpen] = useState(false)
+  const [reportType, setReportType] = useState<'blindspot' | 'light_broken' | 'danger_path' | 'other'>('blindspot')
+  const [reportDesc, setReportDesc] = useState('')
+  const [reportSubmitting, setReportSubmitting] = useState(false)
+  const [reportResult, setReportResult] = useState<{ visible: boolean; cell_count: number; k: number } | null>(null)
+  const submitReport = useCallback(async () => {
+    setReportSubmitting(true)
+    setReportResult(null)
+    try {
+      const r = await fetch('/api/reports', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: reportType,
+          description: reportDesc.slice(0, 280),
+          lat: userPos.lat,
+          lng: userPos.lng,
+        }),
+      })
+      if (r.status === 429) {
+        setSosToast('너무 많은 제보 — 1분 후 재시도')
+        return
+      }
+      if (!r.ok) {
+        setSosToast('제보 전송 실패')
+        return
+      }
+      const j = await r.json()
+      setReportResult({ visible: !!j.visible, cell_count: j.cell_count, k: j.k })
+      setReportDesc('')
+      setSosToast(j.visible
+        ? `✅ 제보 완료 · 셀 누적 ${j.cell_count}건 (k=${j.k} 익명화)`
+        : `🛡 제보 접수 · 셀 누적 ${j.cell_count}/${j.k} (k 미충족 시 비공개)`)
+    } catch {
+      setSosToast('네트워크 오류')
+    } finally {
+      setReportSubmitting(false)
+    }
+  }, [reportType, reportDesc, userPos])
 
   // ===== SOS 긴급신고 모달 =====
   const [sosScreen, setSosScreen] = useState<'closed' | 'options' | 'dialing'>('closed')
@@ -241,10 +290,10 @@ export default function MapView() {
     const w = window as any
     const meta = LAYER_META[layer]
     const div = document.createElement('div')
-    div.style.cssText = 'width:24px;height:30px;position:relative;filter:drop-shadow(0 2px 3px rgba(0,0,0,0.3));cursor:pointer;'
+    div.style.cssText = 'width:26px;height:32px;position:relative;filter:drop-shadow(0 2px 4px rgba(0,0,0,0.28));cursor:pointer;'
     div.innerHTML = `
-      <div style="position:absolute;top:0;left:0;width:24px;height:24px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:${meta.color};border:2px solid #fff;"></div>
-      <div style="position:absolute;top:2px;left:0;width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-size:11px;z-index:2;">${meta.icon}</div>
+      <div style="position:absolute;top:0;left:0;width:26px;height:26px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:${meta.color};border:2px solid #fff;"></div>
+      <div style="position:absolute;top:3px;left:0;width:26px;height:26px;display:flex;align-items:center;justify-content:center;color:#fff;z-index:2;">${meta.icon}</div>
     `
     div.addEventListener('click', async (e) => {
       e.stopPropagation()
@@ -288,44 +337,6 @@ export default function MapView() {
     // 기존 마커/폴리곤 제거
     overlaysRef.current[layer].forEach(o => o.setMap(null))
     overlaysRef.current[layer] = []
-
-    // 사각지대 = 폴리곤 (PostGIS 차집합)
-    if (layer === 'blindspots') {
-      const { data, error } = await supabase.rpc('blindspots_in_bbox', {
-        min_lng: sw.getLng(), min_lat: sw.getLat(),
-        max_lng: ne.getLng(), max_lat: ne.getLat(),
-        cctv_radius_m: 50,
-      })
-      if (error) { console.warn('[blindspots]', error.message); return }
-      const geom: any = (data as any)?.geometry
-      const arr: any[] = []
-      const drawRing = (ring: number[][]) => {
-        const path = ring.map(([lng, lat]) => new w.kakao.maps.LatLng(lat, lng))
-        if (path.length < 3) return
-        const poly = new w.kakao.maps.Polygon({
-          path,
-          strokeWeight: 1, strokeColor: '#dc2626', strokeOpacity: 0.45, strokeStyle: 'shortdash',
-          fillColor: '#dc2626', fillOpacity: 0.22,
-        })
-        poly.setMap(map)
-        arr.push(poly)
-      }
-      if (geom?.type === 'Polygon') {
-        for (const ring of geom.coordinates as number[][][]) drawRing(ring)
-      } else if (geom?.type === 'MultiPolygon') {
-        for (const pg of geom.coordinates as number[][][][]) {
-          if (pg[0]) drawRing(pg[0])  // 외곽 ring 만 (holes 제외)
-        }
-      }
-      overlaysRef.current.blindspots = arr
-      setCounts(c => ({ ...c, blindspots: data?.cctv_count || 0 }))
-      setBlindspotStats({
-        coverage_pct: data?.coverage_pct || 0,
-        blindspot_area_m2: data?.blindspot_area_m2 || 0,
-        cctv_count: data?.cctv_count || 0,
-      })
-      return
-    }
 
     // 사고다발 = 폴리곤 (분기)
     if (layer === 'danger') {
@@ -401,8 +412,6 @@ export default function MapView() {
         loadLayer(layer)
       }
     })
-    // 사각지대 비활성 시 통계 숨김
-    if (!active.has('blindspots')) setBlindspotStats(null)
   }, [active, ready, loadLayer])
 
   // ============ 사용자 위치 변경 시 펄스+50m 원 이동 + 안전점수 ============
@@ -623,20 +632,20 @@ export default function MapView() {
       })
       if (!r.ok) { setSosToast('공유 시작 실패'); return null }
       const data = await r.json()
-      setSosSession({ session_id: data.session_id, share_url: data.share_url, expires_at: data.expires_at })
+      setSosSession({ session_id: data.session_id, share_url: data.share_url, expires_at: data.expires_at, otp: data.otp })
 
       if (!opts?.silent) {
-        const text = `🛡 반딧불이 · 실시간 동선 공유\n${data.share_url}\n(2시간 후 자동 만료)`
+        const text = `🛡 반딧불이 · 실시간 동선 공유\n링크: ${data.share_url}\nOTP: ${data.otp}\n(보호자 인증용 · 별도 채널로 전달 권장)\n(2시간 후 자동 만료)`
         const w = window as any
         if (w.navigator?.share) {
           try { await w.navigator.share({ title: '반딧불이 동선 공유', text, url: data.share_url }) }
           catch {}
         } else if (w.navigator?.clipboard) {
-          try { await w.navigator.clipboard.writeText(data.share_url) } catch {}
+          try { await w.navigator.clipboard.writeText(text) } catch {}
         }
-        setSosToast('공유 링크 복사 완료 — 보호자에게 보내세요')
+        setSosToast(`🔐 OTP ${data.otp} · 보호자에게 별도 채널로 전달`)
       }
-      return data as { session_id: string; share_url: string; expires_at: string }
+      return data as { session_id: string; share_url: string; expires_at: string; otp: string }
     } catch (e: any) {
       setSosToast(e?.message || '공유 실패')
       return null
@@ -653,6 +662,14 @@ export default function MapView() {
     destination_lng: number | null
     destination_lat: number | null
   } | null>(null)
+
+  // routeResult 가 사라지면 (뒤로가기, 출/도착 변경 등) 안내도 자동 종료
+  useEffect(() => {
+    if (!routeResult && guideActive) {
+      setGuideActive(false)
+      guideCandidateRef.current = null
+    }
+  }, [routeResult, guideActive])
 
   const startGuide = useCallback((candidateKey: string) => {
     if (!routeResult) return
@@ -756,9 +773,15 @@ export default function MapView() {
           guideActive={guideActive}
         />
 
-        {/* 카테고리 칩 — directions(입력 중) 에선 숨김. route(결과) 에선 두 줄 헤더 아래로 */}
-        {!((startPlace || endPlace) && !routeResult) && (
-        <div className={`absolute left-3 right-3 z-10 flex gap-1.5 overflow-x-auto scrollbar-hide ${routeResult ? 'top-44' : 'top-20'}`}>
+        {/* 카테고리 칩 — 모드별 헤더 패널 바로 아래로 유동 위치 */}
+        {(() => {
+          // 모드별 칩 top 위치 (헤더 패널 직하 + 4~8px 여유)
+          const chipTop =
+            routeResult ? 'top-28'                  // route 두 줄 헤더 (≈100px) 아래
+            : (startPlace || endPlace) ? 'top-28'   // directions 두 줄 (≈100px) 아래
+            : 'top-16'                              // search/placeCard 한 줄 (≈55px) 아래
+          return (
+        <div className={`absolute left-3 right-3 z-10 flex gap-1.5 overflow-x-auto scrollbar-hide ${chipTop}`}>
           {ALL_LAYERS.map(layer => {
             const m = LAYER_META[layer]
             const isActive = active.has(layer)
@@ -766,13 +789,17 @@ export default function MapView() {
               <button
                 key={layer}
                 onClick={() => toggleLayer(layer)}
-                className={`flex-shrink-0 px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap flex items-center gap-1.5 shadow-sm border transition-all ${
+                className={`flex-shrink-0 pl-2.5 pr-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap flex items-center gap-1.5 shadow-sm border transition-all ${
                   isActive
                     ? 'bg-gray-900 text-white border-gray-900'
-                    : 'bg-white/95 text-gray-400 border-gray-200'
+                    : 'bg-white/95 text-gray-500 border-gray-200'
                 }`}
               >
-                <span className="w-2 h-2 rounded-full" style={{ background: m.color }} />
+                <span
+                  className="flex items-center justify-center"
+                  style={{ color: isActive ? '#fff' : m.color }}
+                  dangerouslySetInnerHTML={{ __html: m.icon }}
+                />
                 <span>{m.label}</span>
                 {isActive && counts[layer] > 0 && (
                   <span className="text-[10px] opacity-70 font-bold">{counts[layer]}</span>
@@ -781,31 +808,15 @@ export default function MapView() {
             )
           })}
         </div>
-        )}
-
-        {/* 사각지대 통계 카드 */}
-        {active.has('blindspots') && blindspotStats && !selectedPlace && !startPlace && !endPlace && !routeResult && (
-          <div className="absolute left-3 right-16 top-32 z-10 bg-white/95 backdrop-blur rounded-xl shadow-md px-3 py-2 flex items-center justify-between border border-red-200">
-            <div className="flex items-center gap-2">
-              <span className="text-base">🕶</span>
-              <div>
-                <div className="text-[10px] text-gray-500 uppercase tracking-wider leading-none">이 영역 CCTV 커버율</div>
-                <div className="text-xl font-extrabold text-red-500 leading-tight">{blindspotStats.coverage_pct}%</div>
-              </div>
-            </div>
-            <div className="text-right">
-              <div className="text-[10px] text-gray-500 uppercase tracking-wider leading-none">사각지대</div>
-              <div className="text-sm font-bold text-gray-900">{(blindspotStats.blindspot_area_m2 / 1_000_000).toFixed(2)} km²</div>
-            </div>
-          </div>
-        )}
+          )
+        })()}
 
         {/* 우측 컨트롤 — 줌 + 현위치 + 계정 (모두 우측 세로 스택) */}
         <div className="absolute right-3 top-32 z-30 flex flex-col gap-2">
           <div className="bg-white rounded-xl shadow-lg overflow-hidden flex flex-col">
-            <button onClick={zoomIn} className="w-11 h-11 flex items-center justify-center text-lg font-bold hover:bg-gray-50 active:bg-gray-100">＋</button>
+            <button onClick={zoomIn} className="w-11 h-11 flex items-center justify-center text-xl font-black text-gray-900 hover:bg-gray-50 active:bg-gray-100" aria-label="확대">+</button>
             <div className="border-t border-gray-100" />
-            <button onClick={zoomOut} className="w-11 h-11 flex items-center justify-center text-lg font-bold hover:bg-gray-50 active:bg-gray-100">－</button>
+            <button onClick={zoomOut} className="w-11 h-11 flex items-center justify-center text-xl font-black text-gray-900 hover:bg-gray-50 active:bg-gray-100" aria-label="축소">−</button>
           </div>
           <button onClick={goMyLocation} className="w-11 h-11 bg-white rounded-xl shadow-lg flex items-center justify-center text-blue-500 text-xl active:bg-gray-100">
             ◎
@@ -857,6 +868,16 @@ export default function MapView() {
           SOS
         </button>
 
+        {/* 시민 제보 FAB — k-익명화 적용 */}
+        <button
+          onClick={() => { setReportOpen(true); setReportResult(null) }}
+          aria-label="시민 제보"
+          title="이 위치 안전 제보 (k=3 익명화)"
+          className="absolute bottom-44 right-3 w-12 h-12 rounded-full bg-white text-gray-700 font-bold shadow-lg z-20 active:scale-95 border border-gray-200 flex items-center justify-center"
+        >
+          🛡
+        </button>
+
         {/* 최초 휴대번호 등록 모달 */}
         {phonePromptOpen && (
           <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
@@ -890,6 +911,85 @@ export default function MapView() {
                 >
                   등록 후 신고
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 시민 제보 모달 — k=3 익명화 + DOMPurify */}
+        {reportOpen && (
+          <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setReportOpen(false)}>
+            <div className="bg-white rounded-2xl p-5 w-full max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start gap-2 mb-3">
+                <div className="text-2xl">🛡</div>
+                <div className="flex-1">
+                  <div className="text-base font-bold">안전 제보</div>
+                  <div className="text-[11px] text-gray-500 leading-relaxed">
+                    위치는 <b>50m 그리드로 양자화</b> 후 저장. 동일 셀에 <b>3건 누적</b> 시에만 지도에 노출됩니다 (k-익명화).
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                {([
+                  ['blindspot', '🕶 사각지대'],
+                  ['light_broken', '💡 가로등 고장'],
+                  ['danger_path', '⚠ 통행 위험'],
+                  ['other', '📝 기타'],
+                ] as const).map(([key, label]) => (
+                  <button
+                    key={key}
+                    onClick={() => setReportType(key)}
+                    className={`p-2.5 text-xs font-semibold rounded-xl border-2 transition-all ${
+                      reportType === key
+                        ? 'border-pink-500 bg-pink-50 text-pink-700'
+                        : 'border-gray-200 bg-white text-gray-600'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              <textarea
+                value={reportDesc}
+                onChange={(e) => setReportDesc(e.target.value.slice(0, 280))}
+                placeholder="설명 (선택, 280자 이내) — HTML 태그는 자동 제거됩니다"
+                maxLength={280}
+                rows={3}
+                className="w-full px-3 py-2.5 border-2 border-gray-200 focus:border-pink-400 outline-none rounded-xl text-sm text-gray-900 resize-none"
+              />
+              <div className="text-[10px] text-gray-400 text-right mt-0.5 mb-3">{reportDesc.length}/280</div>
+
+              {reportResult && (
+                <div className={`text-[11px] rounded-lg p-2.5 mb-3 ${
+                  reportResult.visible
+                    ? 'bg-green-50 border border-green-200 text-green-700'
+                    : 'bg-blue-50 border border-blue-200 text-blue-700'
+                }`}>
+                  {reportResult.visible
+                    ? `✅ 셀 누적 ${reportResult.cell_count}건 (k=${reportResult.k}) — 지도에 표시됩니다.`
+                    : `🔒 셀 누적 ${reportResult.cell_count}/${reportResult.k} — k 충족 전엔 비공개`}
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setReportOpen(false)}
+                  className="flex-1 p-2.5 text-gray-500 font-medium text-sm rounded-xl active:bg-gray-100"
+                >
+                  닫기
+                </button>
+                <button
+                  onClick={submitReport}
+                  disabled={reportSubmitting}
+                  className="flex-1 p-2.5 bg-gradient-to-r from-pink-500 to-red-500 text-white rounded-xl font-bold text-sm active:scale-95 disabled:opacity-40"
+                >
+                  {reportSubmitting ? '전송 중…' : '제보 보내기'}
+                </button>
+              </div>
+              <div className="text-[10px] text-gray-400 text-center mt-2">
+                원본 좌표는 저장되지 않음 · IP는 감사 로그용으로만 기록
               </div>
             </div>
           </div>
@@ -1011,27 +1111,45 @@ export default function MapView() {
           </div>
         )}
 
-        {/* 공유 FAB — 안내 모드 중에만 노출 (안내 전에는 공유 불가) */}
+        {/* 공유 FAB — 안내 모드 중에만 노출 */}
         {guideActive && !sosSession && (
           <button
             onClick={startGuideShare}
             aria-label="안내 경로 동선 공유"
-            className="absolute bottom-64 left-3 px-4 h-14 rounded-full bg-[#2d7eff] text-white shadow-lg z-20 active:scale-95 transition-transform flex items-center gap-2 ring-2 ring-blue-200/60"
+            className="absolute bottom-64 left-3 z-20 group active:scale-[0.97] transition-transform"
             title="보호자에게 안내 경로 공유"
           >
-            <span className="text-lg">📍</span>
-            <span className="text-xs font-bold whitespace-nowrap">보호자에 공유</span>
+            <div className="flex items-center gap-2.5 pl-1.5 pr-4 h-12 rounded-full bg-gradient-to-br from-indigo-500 via-blue-500 to-cyan-500 text-white shadow-xl shadow-blue-500/40 ring-1 ring-white/20">
+              <div className="w-9 h-9 rounded-full bg-white/15 backdrop-blur flex items-center justify-center">
+                <svg viewBox="0 0 24 24" className="w-4.5 h-4.5" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                  <line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/><line x1="15.4" y1="6.5" x2="8.6" y2="10.5"/>
+                </svg>
+              </div>
+              <div className="text-left leading-none">
+                <div className="text-[9px] uppercase tracking-[0.12em] opacity-85 font-semibold">Guardian</div>
+                <div className="text-[13px] font-bold mt-0.5">보호자에 공유</div>
+              </div>
+            </div>
           </button>
         )}
         {guideActive && sosSession && (
           <button
             onClick={endSosShare}
             aria-label="동선 공유 종료"
-            className="absolute bottom-64 left-3 w-14 h-14 rounded-full bg-gray-900 text-white shadow-lg z-20 active:scale-95 transition-transform flex flex-col items-center justify-center leading-none gap-0.5 ring-2 ring-blue-500 animate-pulse"
+            className="absolute bottom-64 left-3 z-20 group active:scale-[0.97] transition-transform"
             title="공유 종료"
           >
-            <span className="text-base">⏹</span>
-            <span className="text-[10px] font-bold">종료</span>
+            <div className="flex items-center gap-2.5 pl-1.5 pr-4 h-12 rounded-full bg-gradient-to-br from-emerald-500 to-green-600 text-white shadow-xl shadow-emerald-500/40 ring-1 ring-white/20">
+              <div className="relative w-9 h-9 rounded-full bg-white/15 backdrop-blur flex items-center justify-center">
+                <span className="absolute inset-0 rounded-full bg-white/30 animate-ping" />
+                <span className="relative w-2 h-2 rounded-full bg-white" />
+              </div>
+              <div className="text-left leading-none">
+                <div className="text-[9px] uppercase tracking-[0.12em] opacity-85 font-semibold">Live</div>
+                <div className="text-[13px] font-bold mt-0.5">공유 중 · 종료</div>
+              </div>
+            </div>
           </button>
         )}
 

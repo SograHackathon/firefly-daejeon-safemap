@@ -10,23 +10,10 @@ export default function SignupPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [passwordConfirm, setPasswordConfirm] = useState('')
-  const [phone, setPhone] = useState('')
   const [displayName, setDisplayName] = useState('')
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  // 휴대폰 자동 포맷
-  const onPhoneChange = (raw: string) => {
-    const d = raw.replace(/[^0-9]/g, '').slice(0, 11)
-    setPhone(d)
-  }
-  const phoneFormatted = (() => {
-    if (phone.length < 4) return phone
-    if (phone.length < 8) return `${phone.slice(0, 3)}-${phone.slice(3)}`
-    if (phone.length === 10) return `${phone.slice(0, 3)}-${phone.slice(3, 6)}-${phone.slice(6)}`
-    return `${phone.slice(0, 3)}-${phone.slice(3, 7)}-${phone.slice(7)}`
-  })()
 
   // 검증
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
@@ -42,13 +29,12 @@ export default function SignupPage() {
   })()
   const pwOk = !!(pwStrength && pwStrength.passed === 5)
   const pwMatch = password.length > 0 && password === passwordConfirm
-  const phoneOk = /^01[0-9]\d{7,8}$/.test(phone)
 
-  // 활성화 단계 — 이메일 형식 OK → 비번 활성, 비번 5조건 → 재입력 활성, 일치 → 휴대폰 활성
+  // 활성화 단계 — 이메일 형식 OK → 비번 활성, 비번 5조건 → 재입력 활성, 일치 → 가입 가능
   const canEditPassword = emailValid
   const canEditPasswordConfirm = emailValid && pwOk
-  const canEditPhone = emailValid && pwOk && pwMatch
-  const canSubmit = emailValid && pwOk && pwMatch && phoneOk
+  const canEditExtras = emailValid && pwOk && pwMatch
+  const canSubmit = emailValid && pwOk && pwMatch
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -62,7 +48,6 @@ export default function SignupPage() {
           email,
           password,
           password_confirm: passwordConfirm,
-          phone,
           display_name: displayName || undefined,
         }),
       })
@@ -94,7 +79,6 @@ export default function SignupPage() {
             <img src="/firefly-logo.jpeg" alt="반딧불이"
               className="relative w-16 h-16 mx-auto rounded-2xl shadow-xl object-cover ring-4 ring-white" />
           </div>
-          <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">SOGRA · ARGOS</div>
           <h1 className="text-2xl font-extrabold text-gray-900 leading-tight">반딧불이 시작하기</h1>
           <p className="text-xs text-gray-600 mt-1">단계별 정보 입력으로 안전하게</p>
         </div>
@@ -102,8 +86,8 @@ export default function SignupPage() {
         {/* 진행 도트 */}
         <div className="flex items-center justify-center gap-2 mb-5">
           <span className={`w-7 h-2 rounded-full transition-colors ${emailValid ? 'bg-pink-500' : 'bg-gray-300'}`} />
-          <span className={`w-7 h-2 rounded-full transition-colors ${pwOk && pwMatch ? 'bg-amber-500' : 'bg-gray-300'}`} />
-          <span className={`w-7 h-2 rounded-full transition-colors ${phoneOk ? 'bg-green-500' : 'bg-gray-300'}`} />
+          <span className={`w-7 h-2 rounded-full transition-colors ${pwOk ? 'bg-amber-500' : 'bg-gray-300'}`} />
+          <span className={`w-7 h-2 rounded-full transition-colors ${pwMatch ? 'bg-green-500' : 'bg-gray-300'}`} />
         </div>
 
         <form onSubmit={onSubmit} className="bg-white rounded-3xl p-6 shadow-2xl border border-white space-y-5">
@@ -162,7 +146,7 @@ export default function SignupPage() {
                   <span className={pwStrength.hasNum ? 'text-green-600 font-semibold' : 'text-gray-400'}>{pwStrength.hasNum ? '✓' : '○'} 숫자</span>
                   <span className={pwStrength.hasSpec ? 'text-green-600 font-semibold' : 'text-gray-400'}>{pwStrength.hasSpec ? '✓' : '○'} 특수문자 !@#$</span>
                 </div>
-                <div className="text-[10px] text-gray-400 mt-1">이메일/휴대폰 포함 X, 같은 문자 3연속 X</div>
+                <div className="text-[10px] text-gray-400 mt-1">이메일 포함 X · 같은 문자 3연속 X · 흔한 비밀번호 차단</div>
               </>
             )}
 
@@ -187,39 +171,24 @@ export default function SignupPage() {
             </div>
           </div>
 
-          {/* 3. 휴대폰 */}
-          <div className={canEditPhone ? '' : 'opacity-40 pointer-events-none select-none'}>
+          {/* 3. 표시이름 (선택) */}
+          <div className={canEditExtras ? '' : 'opacity-40 pointer-events-none'}>
             <div className="flex items-center gap-2 mb-2">
-              <span className={`w-6 h-6 rounded-full text-white text-[11px] font-extrabold flex items-center justify-center transition-colors ${phoneOk ? 'bg-green-500' : 'bg-gray-300'}`}>
-                {phoneOk ? '✓' : '3'}
+              <span className={`w-6 h-6 rounded-full text-white text-[11px] font-extrabold flex items-center justify-center transition-colors ${displayName ? 'bg-green-500' : 'bg-gray-300'}`}>
+                {displayName ? '✓' : '3'}
               </span>
-              <span className="text-sm font-bold text-gray-900">휴대폰</span>
-              <span className="text-[10px] text-pink-500 font-semibold ml-1">🚨 SOS 연동</span>
-              {!canEditPhone && (
+              <span className="text-sm font-bold text-gray-900">표시 이름</span>
+              <span className="text-[10px] text-gray-400 ml-1">(선택)</span>
+              {!canEditExtras && (
                 <span className="text-[10px] text-gray-400 ml-auto">🔒 비밀번호 일치 후</span>
               )}
             </div>
             <input
-              type="tel" inputMode="numeric"
-              value={phoneFormatted}
-              onChange={(e) => onPhoneChange(e.target.value)}
-              required disabled={!canEditPhone}
-              placeholder="010-1234-5678"
-              className="w-full p-3 border-2 border-gray-200 focus:border-green-400 outline-none rounded-xl text-sm font-mono tracking-wider bg-white text-gray-900 placeholder:text-gray-400 transition-colors disabled:bg-gray-50"
-            />
-            <div className="text-[10px] text-gray-500 mt-1.5">SOS 발신 시 본인 식별용 · 암호화 저장</div>
-          </div>
-
-          {/* 표시이름 (선택) */}
-          <div className={canEditPhone ? '' : 'opacity-40 pointer-events-none'}>
-            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest ml-1 mb-1 block">
-              표시 이름 <span className="text-gray-300 font-normal normal-case">(선택)</span>
-            </label>
-            <input
               type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value.slice(0, 40))}
-              placeholder="홍길동" maxLength={40} disabled={!canEditPhone}
-              className="w-full p-3 border-2 border-gray-100 focus:border-gray-300 outline-none rounded-xl text-sm bg-white text-gray-900 placeholder:text-gray-400 transition-colors disabled:bg-gray-50"
+              placeholder="홍길동" maxLength={40} disabled={!canEditExtras}
+              className="w-full p-3 border-2 border-gray-200 focus:border-green-400 outline-none rounded-xl text-sm bg-white text-gray-900 placeholder:text-gray-400 transition-colors disabled:bg-gray-50"
             />
+            <div className="text-[10px] text-gray-500 mt-1.5">미입력 시 이메일 아이디로 자동 설정</div>
           </div>
 
           {error && (
@@ -246,9 +215,6 @@ export default function SignupPage() {
           </Link>
         </div>
 
-        <div className="text-center mt-3">
-          <p className="text-[10px] text-gray-400">🔐 bcrypt · HttpOnly · Rate Limit · 흔한비번 차단</p>
-        </div>
       </div>
     </div>
   )

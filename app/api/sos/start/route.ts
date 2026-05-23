@@ -39,6 +39,10 @@ function randomToken() {
   // 24 bytes → 32자 base64url (충돌 가능성 무시 가능)
   return crypto.randomBytes(24).toString('base64url')
 }
+function randomOtp() {
+  // 6자리 숫자 OTP (000000~999999)
+  return crypto.randomInt(0, 1_000_000).toString().padStart(6, '0')
+}
 function sha256(s: string) {
   return crypto.createHash('sha256').update(s).digest('hex')
 }
@@ -79,14 +83,21 @@ export async function POST(req: NextRequest) {
     return new Response(JSON.stringify({ error: 'session_create_failed', detail: sessErr?.message }), { status: 500 })
   }
 
-  // 2) 보호자 공유 토큰
+  // 2) 보호자 공유 토큰 + OTP 발급 (Guardian Auth Lv2)
+  //    token: URL 에 포함 — DB 에는 sha256 hash 만 저장
+  //    otp:   별도 채널로 전달 (시연: 응답에 포함) — DB 에도 hash 만
   const token = randomToken()
   const tokenHash = sha256(token)
+  const otp = randomOtp()
+  const otpHash = sha256(otp)
 
   const { error: linkErr } = await supabase.from('guardian_links').insert({
     sos_id: sess.id,
     guardian_id: null,
     token_hash: tokenHash,
+    otp_hash: otpHash,
+    otp_attempts: 0,
+    otp_verified: false,
     expires_at: sess.expires_at,
   })
   if (linkErr) {
@@ -111,6 +122,7 @@ export async function POST(req: NextRequest) {
   return Response.json({
     session_id: sess.id,
     token,
+    otp,                           // 보호자에게 별도 채널 전달 — token 만으론 조회 불가
     share_url: shareUrl,
     started_at: sess.started_at,
     expires_at: sess.expires_at,

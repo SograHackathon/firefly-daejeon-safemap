@@ -148,12 +148,6 @@ export default function LoginPage() {
           </Link>
         </div>
 
-        {/* 카드 하단 보안 표시 */}
-        <div className="mt-4 text-center">
-          <p className="text-[10px] text-white/40 tracking-wider">
-            🔐 SSL · HttpOnly 쿠키 · 3계층 Rate Limit
-          </p>
-        </div>
       </div>
     </div>
   )

@@ -39,22 +39,30 @@ export async function GET(
     return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 })
   }
 
-  // planned_route / destination 좌표 / route label 은 RPC 가 아직 반환 안 함.
-  // guardian_links → sos_sessions 직접 join 으로 추가 조회 (service role 이라 RLS 통과).
-  const { data: extra } = await supabase
-    .from('guardian_links')
-    .select('sos_sessions ( planned_route, planned_route_label, destination_lng, destination_lat )')
-    .eq('token_hash', hash)
-    .maybeSingle()
-
-  const sess: any = (extra as any)?.sos_sessions || null
-  const merged = {
-    ...viewData,
-    planned_route: sess?.planned_route ?? null,
-    planned_route_label: sess?.planned_route_label ?? null,
-    destination_lng: sess?.destination_lng ?? null,
-    destination_lat: sess?.destination_lat ?? null,
+  const view: any = viewData
+  // OTP 미인증이면 위치/경로 노출 X — RPC 가 last_location 을 null 로 비워서 보냄
+  // 추가 컬럼 (planned_route 등) 도 인증 후에만 가져옴
+  let extraFields: Record<string, any> = {
+    planned_route: null,
+    planned_route_label: null,
+    destination_lng: null,
+    destination_lat: null,
   }
+  if (!view.needs_otp) {
+    const { data: extra } = await supabase
+      .from('guardian_links')
+      .select('sos_sessions ( planned_route, planned_route_label, destination_lng, destination_lat )')
+      .eq('token_hash', hash)
+      .maybeSingle()
+    const sess: any = (extra as any)?.sos_sessions || null
+    extraFields = {
+      planned_route: sess?.planned_route ?? null,
+      planned_route_label: sess?.planned_route_label ?? null,
+      destination_lng: sess?.destination_lng ?? null,
+      destination_lat: sess?.destination_lat ?? null,
+    }
+  }
+  const merged = { ...view, ...extraFields }
 
   // 감사 로그 (best effort)
   const ip = req.headers.get('x-forwarded-for')?.split(',')[0] || null

@@ -15,6 +15,8 @@ type SosView = {
   planned_route_label?: string | null
   destination_lng?: number | null
   destination_lat?: number | null
+  needs_otp?: boolean       // true 면 OTP 인증 전 — 위치 노출 X
+  otp_attempts?: number     // 현재 실패 횟수
 }
 
 const DEFAULT_CENTER = { lat: 36.3672, lng: 127.3454 } // 충남대 정문
@@ -53,6 +55,46 @@ export default function GuardianSharePage({
   const [view, setView] = useState<SosView | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [now, setNow] = useState(Date.now())
+
+  // OTP 검증 상태
+  const [otpInput, setOtpInput] = useState('')
+  const [otpSubmitting, setOtpSubmitting] = useState(false)
+  const [otpError, setOtpError] = useState<string | null>(null)
+  const [otpRevoked, setOtpRevoked] = useState(false)
+  const submitOtp = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setOtpError(null)
+    setOtpSubmitting(true)
+    try {
+      const r = await fetch(`/api/sos/share/${token}/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ otp: otpInput }),
+      })
+      if (r.status === 429) {
+        setOtpError('너무 많은 시도. 잠시 후 다시 시도해주세요.')
+        return
+      }
+      if (r.status === 403) {
+        setOtpRevoked(true)
+        setOtpError('OTP 5회 실패로 토큰이 무효화되었습니다.')
+        return
+      }
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}))
+        setOtpError(`OTP 불일치 · 남은 시도 ${j.attempts_left ?? 0}회`)
+        return
+      }
+      // 성공 — 즉시 view 재조회 (위치 표시)
+      setOtpInput('')
+      const refresh = await fetch(`/api/sos/share/${token}`, { cache: 'no-store' })
+      if (refresh.ok) setView(await refresh.json())
+    } catch {
+      setOtpError('네트워크 오류')
+    } finally {
+      setOtpSubmitting(false)
+    }
+  }
 
   // 1초마다 timeAgo 갱신
   useEffect(() => {
@@ -249,6 +291,53 @@ export default function GuardianSharePage({
             </div>
           ) : !view ? (
             <div className="text-center py-6 text-gray-500 text-sm">불러오는 중…</div>
+          ) : view.needs_otp ? (
+            // ============ OTP 입력 (Guardian Auth Lv2) ============
+            <div>
+              <div className="text-center mb-4">
+                <div className="text-3xl mb-2">🔒</div>
+                <div className="font-extrabold text-gray-900 text-base">보호자 인증 필요</div>
+                <div className="text-gray-500 text-[11px] mt-1 leading-relaxed">
+                  토큰 단독으로는 위치 조회 불가.<br/>
+                  사용자가 별도로 전달한 <b className="text-gray-700">6자리 OTP</b> 를 입력하세요.
+                </div>
+              </div>
+
+              {otpRevoked ? (
+                <div className="bg-red-50 border border-red-200 text-red-600 text-xs rounded-xl p-3 text-center">
+                  ⛔ 5회 실패 — 토큰이 자동 무효화되었습니다.<br/>
+                  <span className="text-[10px] text-red-400 mt-1 block">사용자에게 재요청 필요</span>
+                </div>
+              ) : (
+                <form onSubmit={submitOtp} className="space-y-3">
+                  <input
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    pattern="\d{6}"
+                    maxLength={6}
+                    value={otpInput}
+                    onChange={(e) => setOtpInput(e.target.value.replace(/[^0-9]/g, ''))}
+                    placeholder="• • • • • •"
+                    className="w-full px-4 py-3.5 text-center text-2xl font-mono font-bold tracking-[0.4em] border-2 border-gray-200 focus:border-pink-400 outline-none rounded-xl bg-white text-gray-900 placeholder:text-gray-300"
+                  />
+                  {otpError && (
+                    <div className="text-xs text-red-500 bg-red-50 border border-red-200 rounded-lg p-2.5">
+                      ⚠ {otpError}
+                    </div>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={otpInput.length !== 6 || otpSubmitting}
+                    className="w-full py-3.5 bg-gradient-to-r from-pink-500 to-red-500 text-white rounded-xl font-bold text-sm disabled:opacity-50 shadow-lg shadow-pink-500/30 active:scale-95 transition-transform"
+                  >
+                    {otpSubmitting ? '확인 중…' : '인증하기'}
+                  </button>
+                  <div className="text-[10px] text-gray-400 text-center pt-1">
+                    5회 실패 시 토큰 자동 무효화 · 모든 시도 감사 로그
+                  </div>
+                </form>
+              )}
+            </div>
           ) : (
             <>
               <div className="grid grid-cols-2 gap-3 mb-3">

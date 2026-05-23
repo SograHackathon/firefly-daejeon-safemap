@@ -1,8 +1,8 @@
 /**
  * 회원가입 (이메일 인증 없음 — autoconfirm)
- * - Zod 검증 + Rate Limit + 비밀번호 5조건 + 흔한비번/이메일 포함/휴대폰 끝자리 차단
- * - Supabase signUp → autoconfirm=true 라 즉시 session 발급 (HttpOnly 쿠키 자동)
- * - profiles.phone, phone_verified=true 업데이트 (자체 입력이지만 본인 확인 의미)
+ * - Zod 검증 + Rate Limit + 비밀번호 5조건 + 흔한비번/이메일 포함 차단
+ * - Supabase admin.createUser → 자동 로그인 X. 가입 후 /auth/login 으로 이동
+ * - 휴대폰 번호는 회원가입에서 수집 X. SOS 시 사용자가 직접 입력 (localStorage)
  */
 import { NextRequest } from 'next/server'
 import { z } from 'zod'
@@ -35,9 +35,6 @@ const Body = z.object({
     .regex(/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/, '특수문자(!@#$ 등) 1자 이상'),
   password_confirm: z.string(),
   display_name: z.string().min(1).max(40).optional(),
-  phone: z.string()
-    .regex(/^01[0-9]\d{7,8}$/, '휴대폰은 010-XXXX-XXXX 형식')
-    .transform(s => s.replace(/[^0-9]/g, '')),
 }).superRefine((data, ctx) => {
   if (data.password !== data.password_confirm) {
     ctx.addIssue({ code: 'custom', path: ['password_confirm'], message: '비밀번호가 일치하지 않습니다' })
@@ -52,9 +49,6 @@ const Body = z.object({
   const local = data.email.split('@')[0]
   if (local.length >= 4 && lower.includes(local.toLowerCase())) {
     ctx.addIssue({ code: 'custom', path: ['password'], message: '비밀번호에 이메일이 포함될 수 없습니다' })
-  }
-  if (data.phone && data.password.includes(data.phone.slice(-4))) {
-    ctx.addIssue({ code: 'custom', path: ['password'], message: '비밀번호에 휴대폰 끝자리가 포함될 수 없습니다' })
   }
   if (/(.)\1{2,}/.test(data.password)) {
     ctx.addIssue({ code: 'custom', path: ['password'], message: '같은 문자가 3회 이상 반복될 수 없습니다' })
@@ -77,7 +71,7 @@ export async function POST(req: NextRequest) {
       issues: parsed.error.issues.map(i => i.message),
     }), { status: 400, headers: { 'Content-Type': 'application/json' } })
   }
-  const { email, password, display_name, phone } = parsed.data
+  const { email, password, display_name } = parsed.data
 
   // admin.createUser: user 만 만들고 session 발급 X → 회원가입 후 별도 로그인 필요
   const { data, error } = await svc.auth.admin.createUser({
@@ -86,7 +80,6 @@ export async function POST(req: NextRequest) {
     email_confirm: true,
     user_metadata: {
       display_name: display_name || email.split('@')[0],
-      phone,
     },
   })
 
@@ -102,13 +95,9 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  // profiles 의 phone + phone_verified=true (본인 입력 자체로 확인 의미)
+  // profiles 의 display_name 만 업데이트 (phone 은 회원가입에서 수집 X)
   await svc.from('profiles')
-    .update({
-      phone,
-      phone_verified: true,
-      display_name: display_name || email.split('@')[0],
-    })
+    .update({ display_name: display_name || email.split('@')[0] })
     .eq('id', data.user.id)
 
   svc.from('audit_log').insert({
