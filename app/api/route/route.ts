@@ -158,90 +158,163 @@ export async function POST(req: NextRequest) {
       return                       { intervalM: 1200, radiusM: 550 }
     })()
 
-    // 폴리라인 따라 누적거리 계산하면서 intervalM 마다 점 샘플링
-    // 도착지 근처(60%~) 는 청킹 제외 — 도착지 너머 핫스팟 잡혀 왕복 경로 생기는 거 방지
-    const coords = fastR.geometry.coordinates as [number, number][]
+    // start-end 직선 위 균등 chunk 샘플링 — swap 시 동일한 hotspot pool 보장 (양방향 대칭)
+    const numChunks =
+      realDist < 800  ? 2 :
+      realDist < 2000 ? 3 :
+      realDist < 4000 ? 4 : 5
     const chunkPoints: LngLat[] = []
-    let cumDist = 0
-    let lastSample = realDist * 0.15  // 출발 15% 이후부터 샘플
-    const sampleUntil = realDist * 0.75  // 도착 25% 전까지 (왕복 방지 + 충분한 청킹)
-    for (let i = 1; i < coords.length; i++) {
-      const prev: LngLat = { lng: coords[i-1][0], lat: coords[i-1][1] }
-      const cur:  LngLat = { lng: coords[i][0],   lat: coords[i][1]   }
-      const seg = haversineM(prev, cur)
-      cumDist += seg
-      if (cumDist >= lastSample && cumDist <= sampleUntil) {
-        chunkPoints.push(cur)
-        lastSample += chunkParams.intervalM
-      }
-      if (cumDist > sampleUntil) break
+    for (let i = 1; i <= numChunks; i++) {
+      const t = i / (numChunks + 1)
+      chunkPoints.push({
+        lng: start.lng + (end.lng - start.lng) * t,
+        lat: start.lat + (end.lat - start.lat) * t,
+      })
     }
 
-    // ========= STEP 3. 각 청킹 점에서 핫스팟 발굴 (병렬) =========
-    const hotspotResults = chunkPoints.length === 0 ? [] : await Promise.all(
-      chunkPoints.map(p =>
-        supabase.rpc('safety_hotspots', {
-          center_lng: p.lng, center_lat: p.lat,
-          radius_m: chunkParams.radiusM, mode: 'balanced'
-        })
-      )
+    // ========= STEP 3. 각 청킹 점에서 핫스팟 발굴 (balanced + night 병렬) =========
+    const balancedPromises = chunkPoints.map(p =>
+      supabase.rpc('safety_hotspots', {
+        center_lng: p.lng, center_lat: p.lat,
+        radius_m: chunkParams.radiusM, mode: 'balanced'
+      }).then(r => ({ mode: 'balanced' as const, data: r.data || [] }))
     )
+    const nightPromises = chunkPoints.map(p =>
+      supabase.rpc('safety_hotspots', {
+        center_lng: p.lng, center_lat: p.lat,
+        radius_m: chunkParams.radiusM, mode: 'night'
+      }).then(r => ({ mode: 'night' as const, data: r.data || [] }))
+    )
+    const hotspotResults = chunkPoints.length === 0 ? [] : await Promise.all([
+      ...balancedPromises, ...nightPromises
+    ])
 
-    // 청킹 점당 top 1개씩만 → 진짜 다른 위치 보장
-    const hotspotMap = new Map<string, LngLat & { score: number }>()
-    hotspotResults.forEach((res) => {
-      const data = (res.data || []) as Array<{ lng: number; lat: number; score: number }>
-      const best = data[0]
-      if (!best) return
-      const key = `${best.lng.toFixed(4)}_${best.lat.toFixed(4)}`
-      if (!hotspotMap.has(key)) hotspotMap.set(key, best)
+    // 청킹 점당 top 3개씩 — chunk 위치가 방향 따라 달라도 pool 충분히 커지게 (swap 비대칭 완화)
+    const hotspotMap = new Map<string, LngLat & { score: number; mode: 'balanced' | 'night' }>()
+    hotspotResults.forEach(({ mode, data }) => {
+      const arr = data as Array<{ lng: number; lat: number; score: number }>
+      arr.slice(0, 3).forEach(best => {
+        const key = `${best.lng.toFixed(4)}_${best.lat.toFixed(4)}`
+        const existing = hotspotMap.get(key)
+        if (!existing || best.score > existing.score) {
+          hotspotMap.set(key, { ...best, mode })
+        }
+      })
     })
 
     // 도착지/출발지 너무 가까운 핫스팟 drop (왕복 경로 방지)
-    // 거리 비례 (직선거리 × 20%, 최소 120m, 최대 350m)
-    const minFromEnd = Math.max(120, Math.min(350, directDist * 0.20))
-    const minFromStart = Math.max(80, Math.min(200, directDist * 0.12))
+    // 양 끝 동일한 보호 거리 — 출/도착 swap 시 후보 수 비대칭 해소
+    const endProtect = Math.max(100, Math.min(220, directDist * 0.12))
+    const minFromEnd = endProtect
+    const minFromStart = endProtect
     const allHotspots = Array.from(hotspotMap.values()).filter(h => {
       const dEnd = haversineM({ lng: h.lng, lat: h.lat }, end)
       const dStart = haversineM({ lng: h.lng, lat: h.lat }, start)
       return dEnd >= minFromEnd && dStart >= minFromStart
     })
 
-    // 점수순 상위 N개 (Tmap 호출 절감)
-    const maxHotspots = realDist < 1500 ? 3 : realDist < 4000 ? 4 : 5
-    const balTop: LngLat[] = allHotspots
+    // 점수순 상위 N개 (Tmap 호출 절감) — 다양화 더 강화
+    const maxHotspots = realDist < 1500 ? 8 : realDist < 4000 ? 12 : 16
+    const balTop = allHotspots
       .sort((a, b) => b.score - a.score)
       .slice(0, maxHotspots)
-      .map(h => ({ lng: h.lng, lat: h.lat }))
+      .map(h => ({ lng: h.lng, lat: h.lat, mode: h.mode }))
 
-    // ========= STEP 4. 안심 후보 Tmap 호출 (병렬) =========
+    // ========= STEP 4. 안심 후보 Tmap 호출 (병렬, mode 별 origin 보존) =========
     const safeRawResults = balTop.length === 0 ? [] : await Promise.all(
-      balTop.map(wp => tmapOne(start, end, [wp]))
+      balTop.map(async wp => {
+        const r = await tmapOne(start, end, [{ lng: wp.lng, lat: wp.lat }])
+        return r ? { ...r, _mode: wp.mode } : null
+      })
     )
-    const safeRaws = safeRawResults.filter(Boolean)
+    const safeRaws = safeRawResults.filter((r): r is NonNullable<typeof r> => Boolean(r))
 
     // 결과 경로가 도착지를 한 번 통과 후 되돌아오는 패턴 검사
-    // 경로 폴리라인 끝에서 두 번째 이상 지점에서 도착지 근처(80m)를 지나면 = 왕복
+    // 마지막 25% 는 도착 진입 구간 — 제외. threshold 30m (실제 통과만 차단)
     const isRoundTrip = (route: any) => {
       const cs = route.geometry.coordinates as [number, number][]
-      if (cs.length < 8) return false
-      // 마지막 몇 점은 도착지 근처이니 제외
-      const checkUntil = Math.max(0, cs.length - 4)
+      if (cs.length < 10) return false
+      const checkUntil = Math.floor(cs.length * 0.75)
       for (let i = 2; i < checkUntil; i++) {
         const p = { lng: cs[i][0], lat: cs[i][1] }
-        if (haversineM(p, end) < 80) return true
+        if (haversineM(p, end) < 30) return true
       }
       return false
     }
 
-    const allCandidates: Candidate[] = [{ ...fastR, origin: 'fast' }]
-    for (const r of safeRaws) {
-      if (!isRoundTrip(r)) allCandidates.push({ ...r, origin: 'balanced' })
+    // ========= 자기근접 루프(돌출 우회) 제거 =========
+    // 경로상의 두 점 Pi, Pj (j-i>=3) 이 직선거리 < SAME_THRESH 인데
+    // 그 사이 누적 경로가 LOOP_MIN_ARC 이상이면 → Pi+1..Pj-1 잘라냄.
+    // (V/T 자 모양 detour 만 제거. 일반 골목길에는 영향 X)
+    const SAME_THRESH = 25
+    const LOOP_MIN_ARC = 120
+    const MAX_SCAN_ARC = 800
+    function deLoop(coords: [number, number][]): [number, number][] {
+      if (coords.length < 6) return coords
+      const out: [number, number][] = []
+      let i = 0
+      while (i < coords.length) {
+        out.push(coords[i])
+        let bestJ = -1
+        let arc = 0
+        for (let k = i + 1; k < coords.length; k++) {
+          arc += haversineM(
+            { lng: coords[k-1][0], lat: coords[k-1][1] },
+            { lng: coords[k][0],   lat: coords[k][1] }
+          )
+          if (arc > MAX_SCAN_ARC) break
+          if (k - i < 3) continue
+          if (arc < LOOP_MIN_ARC) continue
+          const d = haversineM(
+            { lng: coords[i][0], lat: coords[i][1] },
+            { lng: coords[k][0], lat: coords[k][1] }
+          )
+          if (d < SAME_THRESH) bestJ = k  // 더 큰 점프가 보이면 갱신
+        }
+        if (bestJ > i + 1) i = bestJ
+        else i++
+      }
+      return out
+    }
+    function arcLen(coords: [number, number][]): number {
+      let len = 0
+      for (let i = 1; i < coords.length; i++) {
+        len += haversineM(
+          { lng: coords[i-1][0], lat: coords[i-1][1] },
+          { lng: coords[i][0],   lat: coords[i][1] }
+        )
+      }
+      return Math.round(len)
+    }
+    function cleanRoute<T extends { geometry: any; distance_m: number; duration_s: number }>(r: T): T {
+      const cs = r.geometry.coordinates as [number, number][]
+      const cleaned = deLoop(cs)
+      if (cleaned.length === cs.length) return r
+      const newDist = arcLen(cleaned)
+      return {
+        ...r,
+        geometry: { type: 'LineString', coordinates: cleaned },
+        distance_m: newDist,
+        duration_s: Math.round(newDist / WALK_M_PER_SEC),
+      }
     }
 
-    // 우회 1.6배 까지만 허용
+    const allCandidates: Candidate[] = [{ ...cleanRoute(fastR), origin: 'fast' }]
+    for (const r of safeRaws) {
+      if (!isRoundTrip(r)) {
+        const c = cleanRoute(r)
+        allCandidates.push({
+          geometry: c.geometry,
+          distance_m: c.distance_m,
+          duration_s: c.duration_s,
+          origin: r._mode,
+        })
+      }
+    }
+
+    // 우회 1.5배 까지 허용 (자연스러운 우회만)
     const fastest = allCandidates.reduce((a, b) => b.distance_m < a.distance_m ? b : a)
-    const filtered = allCandidates.filter(c => c.distance_m <= fastest.distance_m * 1.6)
+    const filtered = allCandidates.filter(c => c.distance_m <= fastest.distance_m * 1.5)
 
     // 모든 후보 점수 계산 (병렬)
     const scored = await Promise.all(
@@ -249,17 +322,17 @@ export async function POST(req: NextRequest) {
     )
 
     // === 후보 중복 제거 + 점수순 정렬 ===
-    // 비슷한 경로 제거 (50m 이내)
+    // 비슷한 경로 제거 (20m 이내 → 더 다양한 후보 살림)
     const unique: typeof scored = []
     for (const c of scored) {
-      const isDup = unique.some(u => !routesAreDifferent(c, u, 50))
+      const isDup = unique.some(u => !routesAreDifferent(c, u, 20))
       if (!isDup) unique.push(c)
     }
 
-    // 점수 내림차순 정렬 후 상위 3개
+    // 점수 내림차순 정렬 후 상위 N개 (최대 5)
     const top3 = unique
       .sort((a, b) => (b.scoreData?.score ?? 0) - (a.scoreData?.score ?? 0))
-      .slice(0, 3)
+      .slice(0, 5)
 
     type Card = {
       key: string
@@ -269,14 +342,56 @@ export async function POST(req: NextRequest) {
       recommended?: boolean
     }
 
+    // === 라벨링 (5종 우선순위 자동 할당) ===
+    // ⚡ 빠른 길     — origin === 'fast'
+    // 🛡 안심 길     — 비-fast 중 점수 가장 높은
+    // 💡 밝은 길     — 보안등(lights) 카운트 가장 많은
+    // 📹 CCTV 길    — CCTV 카운트 가장 많은
+    // 🌿 우회 길     — 나머지
+    const labelMap = new Map<number, string>()
+
+    const fastIdx = top3.findIndex(c => c.origin === 'fast')
+    if (fastIdx >= 0) labelMap.set(fastIdx, '⚡ 빠른 길')
+
+    // 안심: 비-fast 중 점수 가장 높은 거 (top3 는 이미 점수순)
+    const safeIdx = top3.findIndex((c, i) => i !== fastIdx)
+    if (safeIdx >= 0 && !labelMap.has(safeIdx)) labelMap.set(safeIdx, '🛡 안심 길')
+
+    // 밝은: 라벨 없는 후보 중 lights 카운트 max
+    const remainingForLights = top3
+      .map((c, i) => ({ c, i }))
+      .filter(({ i }) => !labelMap.has(i))
+    if (remainingForLights.length > 0) {
+      const brightest = remainingForLights.reduce((a, b) =>
+        (b.c.scoreData?.counts?.lights ?? 0) > (a.c.scoreData?.counts?.lights ?? 0) ? b : a
+      )
+      labelMap.set(brightest.i, '💡 밝은 길')
+    }
+
+    // CCTV 길: 라벨 없는 후보 중 cctv 카운트 max
+    const remainingForCctv = top3
+      .map((c, i) => ({ c, i }))
+      .filter(({ i }) => !labelMap.has(i))
+    if (remainingForCctv.length > 0) {
+      const cctvMax = remainingForCctv.reduce((a, b) =>
+        (b.c.scoreData?.counts?.cctv ?? 0) > (a.c.scoreData?.counts?.cctv ?? 0) ? b : a
+      )
+      labelMap.set(cctvMax.i, '📹 CCTV 길')
+    }
+
+    // 나머지 → 우회 길
+    top3.forEach((_, i) => {
+      if (!labelMap.has(i)) labelMap.set(i, '🌿 우회 길')
+    })
+
     const candidates: Card[] = top3.map((c, i) => ({
       key: `route_${i + 1}`,
-      label: `경로 ${i + 1}`,
+      label: labelMap.get(i) || `경로 ${i + 1}`,
       route: { geometry: c.geometry, distance_m: c.distance_m, duration_s: c.duration_s },
       score: c.scoreData,
     }))
 
-    // 추천: 점수 1위
+    // 추천: 점수 1위 (top3[0])
     if (candidates[0]) candidates[0].recommended = true
 
     return Response.json({
