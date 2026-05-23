@@ -6,16 +6,32 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "load:cctv": "tsx scripts/load_cctv.ts",
+    "load:lights": "tsx scripts/load_lights.ts",
+    "load:bells": "tsx scripts/load_bells.ts",
+    "load:danger": "tsx scripts/load_danger.ts",
+    "load:cvs": "tsx scripts/load_cvs_kakao.ts",
+    "load:lights:csv": "tsx scripts/load_lights_csv.ts",
+    "load:all": "npm run load:cctv && npm run load:lights && npm run load:bells && npm run load:danger"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.10.3",
+    "@supabase/supabase-js": "^2.106.1",
+    "csv-parse": "^6.2.1",
+    "dotenv": "^17.4.2",
+    "isomorphic-dompurify": "^3.14.0",
     "next": "16.2.6",
+    "proj4": "^2.20.8",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "tsx": "^4.22.3",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/proj4": "^2.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
