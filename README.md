@@ -7,7 +7,6 @@
 실시간으로 융합해 보행자 야간 귀가의 안심 경로를 추천하는 **PWA 웹앱**.
 
 🌐 **데모:** https://firefly-daejeon-safemap.vercel.app
-📂 **레포:** https://github.com/SograHackathon/firefly-daejeon-safemap
 
 ---
 
