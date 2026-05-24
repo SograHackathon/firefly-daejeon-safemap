@@ -7,6 +7,14 @@ export const metadata: Metadata = {
   description: "스마트시티 공공데이터로 그리는 야간 보행자 안전 지도",
 };
 
+// iOS Safari 가 input focus 시 자동 확대하는 동작 차단
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false as const,
+};
+
 const KAKAO_KEY = process.env.NEXT_PUBLIC_KAKAO_MAP_KEY;
 
 export default function RootLayout({

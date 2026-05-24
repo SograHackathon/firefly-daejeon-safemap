@@ -25,6 +25,11 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+/* iOS Safari: input focus 시 자동 확대 차단 (font-size >= 16px) */
+input, textarea, select {
+  font-size: 16px;
+}
+
 /* 사용자 위치 50m 펄스 — 잔잔히 퍼지듯 */
 @keyframes me-pulse {
   0%   { transform: scale(0.4); opacity: 0;    }
