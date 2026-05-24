@@ -671,8 +671,10 @@ export default function MapView() {
       if (!opts?.silent) {
         const text = `🛡 반딧불이 · 실시간 동선 공유\n링크: ${data.share_url}\nOTP: ${data.otp}\n(보호자 인증용 · 별도 채널로 전달 권장)\n(2시간 후 자동 만료)`
         const w = window as any
+        // url 필드를 넘기면 카카오톡 등 일부 앱이 url만 사용하고 text(OTP 포함)를 버림.
+        // text 한 덩어리로만 넘겨서 모든 앱에서 OTP가 함께 전달되도록 한다.
         if (w.navigator?.share) {
-          try { await w.navigator.share({ title: '반딧불이 동선 공유', text, url: data.share_url }) }
+          try { await w.navigator.share({ title: '반딧불이 동선 공유', text }) }
           catch {}
         } else if (w.navigator?.clipboard) {
           try { await w.navigator.clipboard.writeText(text) } catch {}
