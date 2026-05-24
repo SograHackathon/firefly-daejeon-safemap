@@ -94,6 +94,14 @@ export default function SearchPanel(props: Props) {
 
   // route 시트 — 드래그한 위치 그대로 고정 (snap 없음, min/max 클램프만)
   const [sheetHeightVh, setSheetHeightVh] = useState<number>(SHEET_DEFAULT_VH)
+  // 안내 시작/종료 시 시트 자동 축소 (사용자가 다시 올릴 수 있도록 핸들만 보이게 18vh)
+  useEffect(() => {
+    if (props.guideActive) {
+      setSheetHeightVh(18)  // 핸들 + 살짝 보이는 정도
+    } else {
+      setSheetHeightVh(SHEET_DEFAULT_VH)
+    }
+  }, [props.guideActive])
   const dragRef = useRef<{ startY: number; startVh: number; vh: number } | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const onSheetPointerDown = useCallback((e: React.PointerEvent) => {
@@ -157,6 +165,49 @@ export default function SearchPanel(props: Props) {
   const [places, setPlaces] = useState<Place[]>([])
   const [showList, setShowList] = useState(false)
   const [searching, setSearching] = useState(false)
+  // 검색바 포커스 + 검색이력 (최근 10개, localStorage)
+  const [searchFocused, setSearchFocused] = useState(false)
+  // directions 모드 상단 패널 ref + 측정 높이 (히스토리/결과 top 동적 계산)
+  const dirPanelRef = useRef<HTMLDivElement | null>(null)
+  const [dirPanelBottom, setDirPanelBottom] = useState<number>(170)
+  useEffect(() => {
+    if (mode !== 'directions') return
+    const el = dirPanelRef.current
+    if (!el) return
+    const update = () => {
+      setDirPanelBottom(el.offsetTop + el.offsetHeight + 8)
+    }
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [mode, start, end, editingField])
+  const [history, setHistory] = useState<Place[]>([])
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('safemap.history')
+      if (raw) setHistory(JSON.parse(raw))
+    } catch {}
+  }, [])
+  const addToHistory = useCallback((p: Place) => {
+    if (p.id === ME_PLACE_ID) return
+    setHistory(prev => {
+      const next = [p, ...prev.filter(x => x.id !== p.id)].slice(0, 10)
+      try { localStorage.setItem('safemap.history', JSON.stringify(next)) } catch {}
+      return next
+    })
+  }, [])
+  const removeFromHistory = useCallback((id: string) => {
+    setHistory(prev => {
+      const next = prev.filter(x => x.id !== id)
+      try { localStorage.setItem('safemap.history', JSON.stringify(next)) } catch {}
+      return next
+    })
+  }, [])
+  const clearHistory = useCallback(() => {
+    setHistory([])
+    try { localStorage.removeItem('safemap.history') } catch {}
+  }, [])
 
   const [routing, setRouting] = useState(false)
   const [routeError, setRouteError] = useState<string | null>(null)
@@ -202,17 +253,19 @@ export default function SearchPanel(props: Props) {
   }, [onRouteResult, onSelectCandidate])
 
   // 양쪽 정해지면 자동 라우팅 트리거
+  // editingField가 set돼있으면 = 사용자가 수정 중 → 자동 라우팅 X (수정 끝나면 자연스럽게 트리거)
   useEffect(() => {
-    if (start && end && !routeResult && !routing) {
+    if (start && end && !routeResult && !routing && editingField === null) {
       runRouting(start, end)
     }
-  }, [start, end, routeResult, routing, runRouting])
+  }, [start, end, routeResult, routing, editingField, runRouting])
 
   // ============ 검색 결과 클릭 처리 ============
   const pickPlace = useCallback((p: Place) => {
     setQ('')
     setPlaces([])
     setShowList(false)
+    addToHistory(p)
 
     if (editingField === 'start') {
       onSetStart(p)
@@ -224,7 +277,7 @@ export default function SearchPanel(props: Props) {
       // 일반 검색 → 장소 카드 모드
       onSelectPlace(p)
     }
-  }, [editingField, onSetStart, onSetEnd, onSelectPlace])
+  }, [editingField, onSetStart, onSetEnd, onSelectPlace, addToHistory])
 
   // ============ 장소 카드 액션 ============
   const setPlaceAsEnd = useCallback(() => {
@@ -296,21 +349,26 @@ export default function SearchPanel(props: Props) {
       {mode === 'search' && (
         <>
           <div className="absolute top-3 left-3 right-3 z-30 bg-white rounded-2xl px-4 py-3 shadow-lg flex items-center gap-3">
-            <span className="text-gray-400 text-base">🔍</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2.2" strokeLinecap="round" className="flex-shrink-0">
+              <circle cx="11" cy="11" r="7" />
+              <line x1="21" y1="21" x2="16.5" y2="16.5" />
+            </svg>
             <input
               value={q}
               onChange={e => setQ(e.target.value)}
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => setTimeout(() => setSearchFocused(false), 150)}
               placeholder="장소 · 주소 · 도착지 검색"
               className="flex-1 bg-transparent outline-none text-sm placeholder-gray-400 text-gray-800 min-w-0"
             />
             {searching && <span className="text-xs text-gray-400">…</span>}
             {q && (
-              <button onClick={() => setQ('')} className="text-gray-400 text-lg px-1">×</button>
+              <button onClick={() => setQ('')} aria-label="지우기" className="text-gray-400 text-lg px-1">×</button>
             )}
           </div>
           {/* 검색 결과 — 검색바 바로 아래 */}
           {showList && places.length > 0 && (
-            <div className="absolute top-[68px] left-3 right-3 z-30 bg-white rounded-2xl shadow-xl max-h-[60vh] overflow-y-auto">
+            <div className="absolute top-[68px] left-3 right-3 z-50 bg-white rounded-2xl shadow-xl max-h-[60vh] overflow-y-auto">
               {places.map(p => (
                 <button
                   key={p.id}
@@ -326,6 +384,44 @@ export default function SearchPanel(props: Props) {
                     </div>
                   </div>
                 </button>
+              ))}
+            </div>
+          )}
+          {/* 최근 검색 — 검색바 포커스 + 검색어 비었을 때 */}
+          {searchFocused && !q.trim() && history.length > 0 && (
+            <div className="absolute top-[68px] left-3 right-3 z-50 bg-white rounded-2xl shadow-xl max-h-[60vh] overflow-y-auto">
+              <div className="px-4 py-2.5 border-b border-gray-100 flex items-center justify-between">
+                <span className="text-[11px] font-bold text-gray-500 tracking-wider">최근 검색</span>
+                <button
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={clearHistory}
+                  className="text-[11px] text-gray-400 hover:text-red-500"
+                >전체 삭제</button>
+              </div>
+              {history.map(p => (
+                <div
+                  key={p.id}
+                  className="w-full px-4 py-3 border-b border-gray-100 last:border-0 hover:bg-gray-50 flex items-start gap-3 group"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" className="mt-1 flex-shrink-0">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="12 6 12 12 16 14"/>
+                  </svg>
+                  <button
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={() => pickPlace(p)}
+                    className="flex-1 min-w-0 text-left"
+                  >
+                    <div className="text-sm font-semibold text-gray-900 truncate">{p.name}</div>
+                    <div className="text-[11px] text-gray-500 truncate mt-0.5">{p.address}</div>
+                  </button>
+                  <button
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={() => removeFromHistory(p.id)}
+                    aria-label="삭제"
+                    className="text-gray-300 hover:text-red-500 text-sm opacity-0 group-hover:opacity-100 transition"
+                  >×</button>
+                </div>
               ))}
             </div>
           )}
@@ -369,7 +465,7 @@ export default function SearchPanel(props: Props) {
       {mode === 'directions' && (
         <>
           {/* 상단 패널: 출/도착 입력 — 두 줄 다 항상 input */}
-          <div className="absolute top-3 left-3 right-3 z-30 bg-white rounded-2xl shadow-lg">
+          <div ref={dirPanelRef} className="absolute top-3 left-3 right-3 z-30 bg-white rounded-2xl shadow-lg">
             <div className="flex items-start">
               <button onClick={clearAll} title="닫기" className="text-gray-400 text-xl p-3 flex-shrink-0">◀</button>
               {/* 입력 필드 영역 */}
@@ -421,20 +517,30 @@ export default function SearchPanel(props: Props) {
               <button
                 onClick={swap}
                 title="출발/도착 바꾸기"
-                className="w-10 h-10 my-2 mr-2 rounded-full bg-gray-100 text-gray-600 text-base flex items-center justify-center active:bg-gray-200 flex-shrink-0"
-              >⇅</button>
+                aria-label="출발/도착 바꾸기"
+                className="w-10 h-10 my-2 mr-2 rounded-full bg-gray-100 text-gray-600 flex items-center justify-center active:bg-gray-200 flex-shrink-0"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="7 4 7 20"/><polyline points="3 8 7 4 11 8"/>
+                  <polyline points="17 20 17 4"/><polyline points="21 16 17 20 13 16"/>
+                </svg>
+              </button>
             </div>
             {/* 현 위치를 출발지로 빠른 액션 (출발지 없을 때만) */}
             {!start && (
               <button onClick={useMyLocationAsStart} className="w-full px-4 py-2.5 text-xs text-blue-600 font-bold border-t border-gray-100 active:bg-blue-50 flex items-center justify-center gap-1.5">
-                <span>◎</span> 현 위치 ({myPlaceLabel}) 를 출발지로
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3" fill="currentColor"/><circle cx="12" cy="12" r="8"/></svg>
+                현 위치 ({myPlaceLabel}) 를 출발지로
               </button>
             )}
           </div>
 
           {/* 검색 결과 (editingField 인 동안) */}
           {editingField && showList && places.length > 0 && (
-            <div className="absolute top-[170px] left-3 right-3 z-30 bg-white rounded-2xl shadow-xl max-h-[55vh] overflow-y-auto">
+            <div
+              className="absolute left-3 right-3 z-50 bg-white rounded-2xl shadow-xl max-h-[55vh] overflow-y-auto"
+              style={{ top: `${dirPanelBottom}px` }}
+            >
               {places.map(p => (
                 <button
                   key={p.id}
@@ -451,6 +557,49 @@ export default function SearchPanel(props: Props) {
                     </div>
                   </div>
                 </button>
+              ))}
+            </div>
+          )}
+          {/* 최근 검색 (출/도착 input 포커스 + 검색어 비었을 때) */}
+          {editingField && !q.trim() && history.length > 0 && (
+            <div
+              className="absolute left-3 right-3 z-50 bg-white rounded-2xl shadow-xl max-h-[55vh] overflow-y-auto"
+              style={{ top: `${dirPanelBottom}px` }}
+            >
+              <div className="px-4 py-2.5 border-b border-gray-100 flex items-center justify-between">
+                <span className="text-[11px] font-bold text-gray-500 tracking-wider">
+                  최근 검색 ({editingField === 'start' ? '출발지' : '도착지'} 로 설정)
+                </span>
+                <button
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={clearHistory}
+                  className="text-[11px] text-gray-400 hover:text-red-500"
+                >전체 삭제</button>
+              </div>
+              {history.map(p => (
+                <div
+                  key={p.id}
+                  className="w-full px-4 py-3 border-b border-gray-100 last:border-0 hover:bg-gray-50 flex items-start gap-3 group"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" className="mt-1 flex-shrink-0">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="12 6 12 12 16 14"/>
+                  </svg>
+                  <button
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={() => pickPlace(p)}
+                    className="flex-1 min-w-0 text-left"
+                  >
+                    <div className="text-sm font-semibold text-gray-900 truncate">{p.name}</div>
+                    <div className="text-[11px] text-gray-500 truncate mt-0.5">{p.address}</div>
+                  </button>
+                  <button
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={() => removeFromHistory(p.id)}
+                    aria-label="삭제"
+                    className="text-gray-300 hover:text-red-500 text-sm opacity-0 group-hover:opacity-100 transition"
+                  >×</button>
+                </div>
               ))}
             </div>
           )}
@@ -505,8 +654,14 @@ export default function SearchPanel(props: Props) {
               <button
                 onClick={swap}
                 title="출발/도착 바꾸기"
-                className="w-10 h-10 my-2 mr-2 rounded-full bg-gray-100 text-gray-600 text-base flex items-center justify-center active:bg-gray-200 flex-shrink-0"
-              >⇅</button>
+                aria-label="출발/도착 바꾸기"
+                className="w-10 h-10 my-2 mr-2 rounded-full bg-gray-100 text-gray-600 flex items-center justify-center active:bg-gray-200 flex-shrink-0"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="7 4 7 20"/><polyline points="3 8 7 4 11 8"/>
+                  <polyline points="17 20 17 4"/><polyline points="21 16 17 20 13 16"/>
+                </svg>
+              </button>
             </div>
           </div>
 
@@ -544,7 +699,10 @@ export default function SearchPanel(props: Props) {
                 </div>
 
                 <div className="grid grid-cols-1 gap-2">
-                  {routeResult.candidates.map((c, i) => {
+                  {routeResult.candidates
+                    .map((c, i) => ({ c, i }))
+                    .filter(({ c }) => !guideActive || c.key === selectedCandidate)
+                    .map(({ c, i }) => {
                     const isSelected = selectedCandidate === c.key
                     const color = CARD_COLORS[i] ?? CARD_COLORS[2]
                     return (
@@ -558,7 +716,7 @@ export default function SearchPanel(props: Props) {
                           <div className="text-xs font-bold flex items-center gap-1.5">
                             <span className={color.text}>● {c.label}</span>
                             {c.recommended && (
-                              <span className="text-[10px] bg-gray-900 text-white px-1.5 py-0.5 rounded-full">🛡 추천</span>
+                              <span className="text-[10px] bg-gray-900 text-white px-2 py-0.5 rounded-full font-bold tracking-wide">BEST</span>
                             )}
                           </div>
                           {c.score && (
@@ -577,12 +735,12 @@ export default function SearchPanel(props: Props) {
                         </div>
                         {c.score && (
                           <div className="flex gap-3 text-[11px] text-gray-600 flex-wrap">
-                            <span>📹 {c.score.counts.cctv}</span>
-                            <span>💡 {c.score.counts.lights}</span>
-                            <span>🛎 {c.score.counts.bells}</span>
-                            <span>🏪 {c.score.counts.cvs}</span>
+                            <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-blue-500"/>CCTV <b className="text-gray-900">{c.score.counts.cctv}</b></span>
+                            <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-amber-500"/>가로등 <b className="text-gray-900">{c.score.counts.lights}</b></span>
+                            <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-green-500"/>비상벨 <b className="text-gray-900">{c.score.counts.bells}</b></span>
+                            <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-orange-500"/>편의점 <b className="text-gray-900">{c.score.counts.cvs}</b></span>
                             {c.score.counts.danger_zones > 0 && (
-                              <span className="text-red-500 font-bold">⚠ 위험 {c.score.counts.danger_zones}</span>
+                              <span className="flex items-center gap-1 text-red-500"><span className="w-1.5 h-1.5 rounded-full bg-red-500"/>위험 <b>{c.score.counts.danger_zones}</b></span>
                             )}
                           </div>
                         )}

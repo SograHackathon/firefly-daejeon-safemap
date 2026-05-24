@@ -24,3 +24,11 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* 사용자 위치 50m 펄스 — 잔잔히 퍼지듯 */
+@keyframes me-pulse {
+  0%   { transform: scale(0.4); opacity: 0;    }
+  15%  { transform: scale(0.5); opacity: 0.18; }
+  70%  { transform: scale(1.0); opacity: 0.05; }
+  100% { transform: scale(1.1); opacity: 0;    }
+}

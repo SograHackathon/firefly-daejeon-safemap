@@ -58,8 +58,8 @@ export default function MapView() {
     radius_m: number
   } | null>(null)
   const SAFETY_RADIUS_M = 50
-  const meCircleRef = useRef<any>(null)
   const meOverlayRef = useRef<any>(null)
+  const mePulseRef = useRef<any>(null)  // 50m 실거리 파란 펄스
 
   // ===== 인증 사용자 =====
   const router = useRouter()
@@ -230,18 +230,47 @@ export default function MapView() {
         zIndex: 10,
       })
 
-      // 50m 안전반경 원 (실시간)
-      meCircleRef.current = new w.kakao.maps.Circle({
-        center: new w.kakao.maps.LatLng(DEFAULT_CENTER.lat, DEFAULT_CENTER.lng),
-        radius: SAFETY_RADIUS_M,
-        strokeWeight: 2,
-        strokeColor: '#2d7eff',
-        strokeOpacity: 0.5,
-        strokeStyle: 'dashed',
-        fillColor: '#2d7eff',
-        fillOpacity: 0.08,
-      })
-      meCircleRef.current.setMap(map)
+      // 50m 펄스 (실거리 — 줌별 px 동적 계산)
+      const renderPulse = () => {
+        const proj = map.getProjection()
+        const pos = meOverlayRef.current?.getPosition?.()
+          ?? new w.kakao.maps.LatLng(DEFAULT_CENTER.lat, DEFAULT_CENTER.lng)
+        const lat = pos.getLat()
+        const lng = pos.getLng()
+        // 50m 동쪽 좌표
+        const lng2 = lng + SAFETY_RADIUS_M / (111_000 * Math.cos(lat * Math.PI / 180))
+        let rPx = 60
+        try {
+          if (proj?.containerPointFromCoords) {
+            const p1 = proj.containerPointFromCoords(pos)
+            const p2 = proj.containerPointFromCoords(new w.kakao.maps.LatLng(lat, lng2))
+            const dx = Math.abs((p2?.x ?? 0) - (p1?.x ?? 0))
+            if (isFinite(dx) && dx > 0) rPx = Math.max(20, dx)
+          }
+        } catch {}
+        const dPx = rPx * 2
+        const off = -rPx
+        const pulseContent = `<div style="position:relative;width:0;height:0;pointer-events:none;">
+          <div style="position:absolute;left:${off}px;top:${off}px;width:${dPx}px;height:${dPx}px;
+                      border-radius:50%;background:#2d7eff;
+                      opacity:0;transform:scale(0.4);
+                      will-change:transform,opacity;
+                      animation:me-pulse 3.6s ease-out infinite;"></div>
+          <div style="position:absolute;left:${off}px;top:${off}px;width:${dPx}px;height:${dPx}px;
+                      border-radius:50%;background:#2d7eff;
+                      opacity:0;transform:scale(0.4);
+                      will-change:transform,opacity;
+                      animation:me-pulse 3.6s ease-out 1.8s infinite;"></div>
+        </div>`
+        if (mePulseRef.current) mePulseRef.current.setMap(null)
+        mePulseRef.current = new w.kakao.maps.CustomOverlay({
+          position: pos,
+          content: pulseContent,
+          yAnchor: 0.5, xAnchor: 0.5, zIndex: 1, map,
+        })
+      }
+      renderPulse()
+      w.kakao.maps.event.addListener(map, 'zoom_changed', renderPulse)
 
       // 지도 이동/줌 끝나면 활성 레이어 다시 로드 (debounce)
       let timer: ReturnType<typeof setTimeout> | null = null
@@ -255,6 +284,10 @@ export default function MapView() {
 
       // 지도 빈 영역(또는 POI 텍스트) 클릭 → 카카오 POI 자동 매칭 후 카드 표시
       w.kakao.maps.event.addListener(map, 'click', async (mouseEvent: any) => {
+        // 검색바/input 포커스 해제 → 히스토리 패널 닫힘
+        if (document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur()
+        }
         const latLng = mouseEvent.latLng
         const lng = latLng.getLng()
         const lat = latLng.getLat()
@@ -420,7 +453,7 @@ export default function MapView() {
     const w = window as any
     const latLng = new w.kakao.maps.LatLng(userPos.lat, userPos.lng)
     if (meOverlayRef.current) meOverlayRef.current.setPosition(latLng)
-    if (meCircleRef.current)  meCircleRef.current.setPosition(latLng)
+    if (mePulseRef.current)   mePulseRef.current.setPosition(latLng)
 
     const supabase = createClient()
     supabase.rpc('point_safety', {
@@ -551,6 +584,7 @@ export default function MapView() {
       (pos) => {
         const w = window as any
         const { latitude: lat, longitude: lng } = pos.coords
+        mapRef.current.setLevel(3) // 줌 확대 고정 (3 = 골목 단위)
         mapRef.current.setCenter(new w.kakao.maps.LatLng(lat, lng))
         setUserPos({ lat, lng })
       },
@@ -814,12 +848,28 @@ export default function MapView() {
         {/* 우측 컨트롤 — 줌 + 현위치 + 계정 (모두 우측 세로 스택) */}
         <div className="absolute right-3 top-32 z-30 flex flex-col gap-2">
           <div className="bg-white rounded-xl shadow-lg overflow-hidden flex flex-col">
-            <button onClick={zoomIn} className="w-11 h-11 flex items-center justify-center text-xl font-black text-gray-900 hover:bg-gray-50 active:bg-gray-100" aria-label="확대">+</button>
+            <button onClick={zoomIn} aria-label="확대" className="w-11 h-11 flex items-center justify-center text-gray-700 hover:bg-gray-50 active:bg-gray-100">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+                <line x1="12" y1="5" x2="12" y2="19"/>
+                <line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+            </button>
             <div className="border-t border-gray-100" />
-            <button onClick={zoomOut} className="w-11 h-11 flex items-center justify-center text-xl font-black text-gray-900 hover:bg-gray-50 active:bg-gray-100" aria-label="축소">−</button>
+            <button onClick={zoomOut} aria-label="축소" className="w-11 h-11 flex items-center justify-center text-gray-700 hover:bg-gray-50 active:bg-gray-100">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+                <line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+            </button>
           </div>
-          <button onClick={goMyLocation} className="w-11 h-11 bg-white rounded-xl shadow-lg flex items-center justify-center text-blue-500 text-xl active:bg-gray-100">
-            ◎
+          <button onClick={goMyLocation} aria-label="내 위치" className="w-11 h-11 bg-white rounded-xl shadow-lg flex items-center justify-center text-blue-500 active:bg-gray-100">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3" fill="currentColor"/>
+              <circle cx="12" cy="12" r="8"/>
+              <line x1="12" y1="1" x2="12" y2="4"/>
+              <line x1="12" y1="20" x2="12" y2="23"/>
+              <line x1="1" y1="12" x2="4" y2="12"/>
+              <line x1="20" y1="12" x2="23" y2="12"/>
+            </svg>
           </button>
 
           {/* 계정 — 현위치 버튼 바로 아래 */}

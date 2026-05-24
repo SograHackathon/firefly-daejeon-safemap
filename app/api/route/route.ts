@@ -351,11 +351,11 @@ export async function POST(req: NextRequest) {
     const labelMap = new Map<number, string>()
 
     const fastIdx = top3.findIndex(c => c.origin === 'fast')
-    if (fastIdx >= 0) labelMap.set(fastIdx, '⚡ 빠른 길')
+    if (fastIdx >= 0) labelMap.set(fastIdx, '빠른 길')
 
     // 안심: 비-fast 중 점수 가장 높은 거 (top3 는 이미 점수순)
     const safeIdx = top3.findIndex((c, i) => i !== fastIdx)
-    if (safeIdx >= 0 && !labelMap.has(safeIdx)) labelMap.set(safeIdx, '🛡 안심 길')
+    if (safeIdx >= 0 && !labelMap.has(safeIdx)) labelMap.set(safeIdx, '안심 길')
 
     // 밝은: 라벨 없는 후보 중 lights 카운트 max
     const remainingForLights = top3
@@ -365,7 +365,7 @@ export async function POST(req: NextRequest) {
       const brightest = remainingForLights.reduce((a, b) =>
         (b.c.scoreData?.counts?.lights ?? 0) > (a.c.scoreData?.counts?.lights ?? 0) ? b : a
       )
-      labelMap.set(brightest.i, '💡 밝은 길')
+      labelMap.set(brightest.i, '밝은 길')
     }
 
     // CCTV 길: 라벨 없는 후보 중 cctv 카운트 max
@@ -376,12 +376,12 @@ export async function POST(req: NextRequest) {
       const cctvMax = remainingForCctv.reduce((a, b) =>
         (b.c.scoreData?.counts?.cctv ?? 0) > (a.c.scoreData?.counts?.cctv ?? 0) ? b : a
       )
-      labelMap.set(cctvMax.i, '📹 CCTV 길')
+      labelMap.set(cctvMax.i, 'CCTV 길')
     }
 
     // 나머지 → 우회 길
     top3.forEach((_, i) => {
-      if (!labelMap.has(i)) labelMap.set(i, '🌿 우회 길')
+      if (!labelMap.has(i)) labelMap.set(i, '우회 길')
     })
 
     const candidates: Card[] = top3.map((c, i) => ({

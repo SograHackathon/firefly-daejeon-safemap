@@ -176,16 +176,10 @@ export default function GuardianSharePage({
       })
     }
 
-    // 처음 출/도/경로 정보 도착 시 한 번만 bounds 맞춤
-    if (!fittedRef.current && view.planned_route?.coordinates?.length) {
-      const bounds = new w.kakao.maps.LatLngBounds()
-      view.planned_route.coordinates.forEach(([lng, lat]: any) =>
-        bounds.extend(new w.kakao.maps.LatLng(lat, lng))
-      )
-      if (view.last_location) {
-        bounds.extend(new w.kakao.maps.LatLng(view.last_location.lat, view.last_location.lng))
-      }
-      map.setBounds(bounds, 32, 32, 32, 32)
+    // 처음 1회: 사용자 위치를 중앙에 두고 줌 확대
+    if (!fittedRef.current && view.last_location) {
+      map.setLevel(3) // 골목 단위 줌
+      map.setCenter(new w.kakao.maps.LatLng(view.last_location.lat, view.last_location.lng))
       fittedRef.current = true
     }
   }, [view])
@@ -204,10 +198,10 @@ export default function GuardianSharePage({
     const moved = !last || Math.hypot((last.lng - lng), (last.lat - lat)) > 0.00005 // 약 5m+
     if (moved) trailRef.current.push({ lng, lat })
 
-    // 핀 (없으면 만들고, 있으면 위치만 이동)
-    const pinHtml = `<div style="position:relative;width:32px;height:38px;filter:drop-shadow(0 3px 4px rgba(0,0,0,0.4));">
-      <div style="position:absolute;inset:0;border-radius:50%;background:rgba(45,126,255,0.28);animation:me-ring 2s infinite;"></div>
-      <div style="position:absolute;top:6px;left:6px;right:6px;bottom:6px;background:#2d7eff;border:3px solid #fff;border-radius:50%;"></div>
+    // 핀 (적당한 크기 + 옅은 펄스 + 단단한 중앙 도트)
+    const pinHtml = `<div style="position:relative;width:26px;height:26px;">
+      <div style="position:absolute;inset:0;border-radius:50%;background:rgba(45,126,255,0.2);animation:me-ring 2.4s ease-out infinite;"></div>
+      <div style="position:absolute;top:6px;left:6px;width:14px;height:14px;background:#2d7eff;border:2.5px solid #fff;border-radius:50%;box-shadow:0 1px 3px rgba(0,0,0,0.3);"></div>
     </div>`
     if (!pinRef.current) {
       pinRef.current = new w.kakao.maps.CustomOverlay({
