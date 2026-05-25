@@ -303,6 +303,18 @@ export default function MapView() {
         } catch {}
       })
 
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            const { latitude: lat, longitude: lng } = pos.coords
+            map.setLevel(3)
+            map.setCenter(new w.kakao.maps.LatLng(lat, lng))
+            setUserPos({ lat, lng })
+          },
+          () => {},
+          { enableHighAccuracy: true, timeout: 8000 },
+        )
+      }
       setReady(true)
       })
     }
