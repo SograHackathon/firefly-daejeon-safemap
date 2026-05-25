@@ -1208,11 +1208,31 @@ export default function MapView() {
         {/* 공유 활성 배너 */}
         {sosSession && (
           <div className="absolute top-32 left-3 right-16 z-20 bg-blue-500/95 backdrop-blur text-white rounded-xl shadow-lg px-3 py-2 flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+            <span className="w-2 h-2 rounded-full bg-white animate-pulse shrink-0" />
             <div className="flex-1 min-w-0">
               <div className="text-[11px] uppercase tracking-wider opacity-80 leading-none">실시간 동선 공유 중</div>
-              <div className="text-xs font-mono truncate opacity-95 mt-0.5">{sosSession.share_url.replace(/^https?:\/\//, '')}</div>
             </div>
+            <button
+              onClick={async () => {
+                const text = sosSession.otp
+                  ? `🛡 반딧불이 · 실시간 동선 공유\n링크: ${sosSession.share_url}\nOTP: ${sosSession.otp}\n(보호자 인증용 · 별도 채널로 전달 권장)\n(2시간 후 자동 만료)`
+                  : `🛡 반딧불이 · 실시간 동선 공유\n링크: ${sosSession.share_url}\n(2시간 후 자동 만료)`
+                const w = window as any
+                if (w.navigator?.share) {
+                  try { await w.navigator.share({ title: '반딧불이 동선 공유', text }) } catch {}
+                } else if (w.navigator?.clipboard) {
+                  try { await w.navigator.clipboard.writeText(text); setSosToast('링크 복사됨') } catch {}
+                }
+              }}
+              className="flex items-center gap-1 bg-white/20 hover:bg-white/30 active:bg-white/40 rounded-lg px-2.5 py-1.5 text-xs font-semibold shrink-0 transition-colors"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+                <polyline points="16 6 12 2 8 6"/>
+                <line x1="12" y1="2" x2="12" y2="15"/>
+              </svg>
+              공유
+            </button>
           </div>
         )}
 
