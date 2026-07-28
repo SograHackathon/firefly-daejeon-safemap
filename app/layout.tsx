@@ -3,7 +3,7 @@ import Script from "next/script";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "반딧불이 · 유성구 안심맵",
+  title: "반딧불이 · 대전 안심맵",
   description: "스마트시티 공공데이터로 그리는 야간 보행자 안전 지도",
 };
 
