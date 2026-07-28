@@ -5,7 +5,7 @@
 대전 공공 안전 인프라(CCTV · 보안등 · 안전비상벨 · 24시간 편의점 · 보행자 사고다발지점)를
 실시간으로 융합해 보행자 야간 귀가의 안심 경로를 추천하는 **PWA 웹앱**.
 
-🌐 **데모:** https://firefly-daejeon-safemap.vercel.app
+🌐 **데모:** https://firefly-daejeon.vercel.app
 
 ---
 
