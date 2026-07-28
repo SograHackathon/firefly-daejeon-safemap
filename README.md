@@ -311,4 +311,9 @@ app/
 
 스마트시티 + 야간 보행자 안전. 시민이 체감하는 보안 서비스.
 
-**SOGRA Hackathon 2026**
+| 멤버 | 담당 |
+|---|---|
+| [박성민 (PParksung)](https://github.com/PParksung) | 인증 시스템(회원가입·로그인·세션·middleware), SOS 실시간 동선공유(OTP 3중 방어·하트비트), 안심 경로 라우팅 API + PostGIS RPC 5종, Rate Limit 등 보안 풀스택, 지도 핵심 컴포넌트(MapView) |
+| [홍기헌 (kiheon0709)](https://github.com/kiheon0709) | 서비스 초기 구현(지도·공공데이터 적재·기본 UI), UI/UX 다듬기, iOS Safari 대응, 배포·문서화 |
+
+**SOGRA Hackathon 2026 — 최우수상 🏆**
